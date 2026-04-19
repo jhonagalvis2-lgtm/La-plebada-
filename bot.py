@@ -1,19 +1,30 @@
 import os
 import logging
-import csv
-from datetime import datetime
+import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
-import anthropic
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
-SYSTEM_PROMPT = """Eres el asistente de La Plebada, comunidad educativa de trading colombiana creada por Alexander Guzmán. Responde en español colombiano. Educa sobre trading, forex y criptomonedas. SIEMPRE aclara que tu contenido es educativo, no asesoría financiera."""
+SYSTEM_PROMPT = """Eres el asistente de La Plebada, comunidad educativa de trading colombiana creada por Alexander Guzmán. Responde en español colombiano amigable. Educa sobre trading, forex y criptomonedas. SIEMPRE aclara que tu contenido es educativo, no asesoría financiera. NUNCA prometas ganancias."""
 
 logging.basicConfig(level=logging.INFO)
-client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 historial = {}
+
+def preguntar_claude(uid, texto):
+    if uid not in historial:
+        historial[uid] = []
+    historial[uid].append({"role": "user", "content": texto})
+    mensajes = historial[uid][-10:]
+    respuesta = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+        json={"model": "claude-haiku-4-5-20251001", "max_tokens": 512, "system": SYSTEM_PROMPT, "messages": mensajes}
+    )
+    texto_respuesta = respuesta.json()["content"][0]["text"]
+    historial[uid].append({"role": "assistant", "content": texto_respuesta})
+    return texto_respuesta
 
 def menu():
     return InlineKeyboardMarkup([
@@ -35,9 +46,9 @@ async def botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     textos = {
-        "menu": "👇 Menú Principal:",
+        "menu": "👇 *Menú Principal La Plebada:*",
         "trading": "📈 *Trading*\n\nComprar y vender activos para ganar con cambios de precio.\n\nTipos:\n• Swing Trading\n• Day Trading\n• Scalping\n\n⚠️ _Siempre implica riesgo._",
-        "analisis": "📊 *Análisis Técnico*\n\nEstudio de gráficos para anticipar precios.\n\n• Velas japonesas\n• Soporte y Resistencia\n• RSI, MACD, Medias Móviles\n\n💡 Practica en TradingView.com",
+        "analisis": "📊 *Análisis Técnico*\n\nEstudio de gráficos para anticipar precios.\n\n• Velas japonesas\n• Soporte y Resistencia\n• RSI, MACD, Medias Móviles\n\n💡 Practica gratis en TradingView.com",
         "riesgo": "💰 *Gestión de Riesgo*\n\n• Arriesga máximo 1-2% por operación\n• Usa siempre Stop Loss\n• Risk/Reward mínimo 1:2\n\n🇨🇴 Con $1.000.000 COP arriesga máx $20.000 por trade.",
         "psicologia": "🧠 *Psicología*\n\nErrores comunes:\n• FOMO\n• Revenge trading\n• Sobreconfianza\n\nHábitos ganadores:\n✅ Diario de operaciones\n✅ Respetar el plan",
         "about": "ℹ️ *La Plebada*\n\n👤 Creador: Alexander Guzmán 🇨🇴\nTrader colombiano que democratiza la educación financiera.\n\n⚠️ _No gestionamos dinero de terceros._",
@@ -49,17 +60,12 @@ async def botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    texto = update.message.text
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    if uid not in historial:
-        historial[uid] = []
-    historial[uid].append({"role": "user", "content": texto})
     try:
-        r = client.messages.create(model="claude-opus-4-5", max_tokens=512, system=SYSTEM_PROMPT, messages=historial[uid][-10:])
-        respuesta = r.content[0].text
-        historial[uid].append({"role": "assistant", "content": respuesta})
+        respuesta = preguntar_claude(uid, update.message.text)
         await update.message.reply_text(respuesta + "\n\n⚠️ _Educativo, no asesoría financiera._", parse_mode="Markdown", reply_markup=volver())
     except Exception as e:
+        logging.error(f"Error: {e}")
         await update.message.reply_text("😅 Error técnico, intenta de nuevo.")
 
 async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -76,4 +82,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
